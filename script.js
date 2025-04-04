@@ -14,10 +14,12 @@ document.addEventListener('DOMContentLoaded', function() {
         discardPile: [],
         playerHand: [],
         isHost: false,
-        socket: null
+        socket: null,
+        gameStage: 'welcome' // 'welcome', 'lobby', 'game'
     };
 
     // DOM Elements
+    const loadingScreen = document.getElementById('loading-screen');
     const welcomeScreen = document.getElementById('welcome-screen');
     const lobbyScreen = document.getElementById('lobby-screen');
     const gameScreen = document.getElementById('game-screen');
@@ -72,6 +74,90 @@ document.addEventListener('DOMContentLoaded', function() {
         };
     }
 
+    // Save game state to localStorage
+    function saveGameState() {
+        const savedState = {
+            gameId: gameState.gameId,
+            playerId: gameState.playerId,
+            playerName: gameState.playerName,
+            isHost: gameState.isHost,
+            gameStage: gameState.gameStage
+        };
+        
+        localStorage.setItem('unoGameState', JSON.stringify(savedState));
+    }
+
+    // Load game state from localStorage
+    function loadGameState() {
+        const savedState = localStorage.getItem('unoGameState');
+        
+        if (savedState) {
+            const parsedState = JSON.parse(savedState);
+            
+            // Update gameState with saved values
+            gameState.gameId = parsedState.gameId;
+            gameState.playerId = parsedState.playerId;
+            gameState.playerName = parsedState.playerName;
+            gameState.isHost = parsedState.isHost;
+            gameState.gameStage = parsedState.gameStage;
+            
+            return true;
+        }
+        
+        return false;
+    }
+
+    // Clear saved game state
+    function clearGameState() {
+        localStorage.removeItem('unoGameState');
+    }
+
+    // Reconnect to game
+    function reconnectToGame() {
+        if (gameState.gameStage === 'lobby') {
+            // Reconnect to lobby
+            gameState.socket.emit('reconnect-lobby', {
+                gameId: gameState.gameId,
+                playerId: gameState.playerId,
+                playerName: gameState.playerName
+            });
+        } else if (gameState.gameStage === 'game') {
+            // Reconnect to game
+            gameState.socket.emit('reconnect-game', {
+                gameId: gameState.gameId,
+                playerId: gameState.playerId,
+                playerName: gameState.playerName
+            });
+        } else {
+            // Show welcome screen if no valid game state
+            showScreen('welcome');
+        }
+    }
+
+    // Show specific screen and hide others
+    function showScreen(screen) {
+        loadingScreen.classList.add('hidden');
+        welcomeScreen.classList.add('hidden');
+        lobbyScreen.classList.add('hidden');
+        gameScreen.classList.add('hidden');
+        
+        if (screen === 'welcome') {
+            welcomeScreen.classList.remove('hidden');
+            gameState.gameStage = 'welcome';
+        } else if (screen === 'lobby') {
+            lobbyScreen.classList.remove('hidden');
+            gameState.gameStage = 'lobby';
+        } else if (screen === 'game') {
+            gameScreen.classList.remove('hidden');
+            gameState.gameStage = 'game';
+        } else if (screen === 'loading') {
+            loadingScreen.classList.remove('hidden');
+        }
+        
+        // Save current game stage
+        saveGameState();
+    }
+
     // Simulate server responses
     function handleSocketEvent(event, data) {
         switch(event) {
@@ -105,6 +191,30 @@ document.addEventListener('DOMContentLoaded', function() {
                     });
                     document.dispatchEvent(errorEvent);
                 }
+                break;
+                
+            case 'reconnect-lobby':
+                // Simulate reconnecting to lobby
+                const reconnectLobbyEvent = new CustomEvent('socket:lobby-reconnected', { 
+                    detail: { 
+                        players: simulateReconnectPlayers(data.playerName, data.playerId, data.isHost)
+                    } 
+                });
+                document.dispatchEvent(reconnectLobbyEvent);
+                break;
+                
+            case 'reconnect-game':
+                // Simulate reconnecting to game
+                const reconnectGameEvent = new CustomEvent('socket:game-reconnected', { 
+                    detail: { 
+                        players: simulateReconnectPlayers(data.playerName, data.playerId, data.isHost),
+                        deck: generateDeck(),
+                        currentPlayer: gameState.players.length > 0 ? gameState.players[0].id : data.playerId,
+                        currentColor: colors[Math.floor(Math.random() * colors.length)],
+                        currentValue: values[Math.floor(Math.random() * values.length)]
+                    } 
+                });
+                document.dispatchEvent(reconnectGameEvent);
                 break;
                 
             case 'player-joined':
@@ -186,6 +296,48 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         
         return existingPlayers;
+    }
+
+    function simulateReconnectPlayers(playerName, playerId, isHost) {
+        // For reconnection, create a more realistic player list
+        let players = [];
+        
+        if (isHost) {
+            // If host, add self as first player
+            players.push({ id: playerId, name: playerName, cardCount: 0 });
+            
+            // Add 2-4 random players
+            const numPlayers = Math.floor(Math.random() * 3) + 2;
+            const names = ['Alice', 'Bob', 'Charlie', 'David', 'Emma', 'Frank'];
+            
+            for (let i = 0; i < numPlayers; i++) {
+                players.push({
+                    id: generatePlayerId(),
+                    name: names[i],
+                    cardCount: 0
+                });
+            }
+        } else {
+            // If not host, add host first
+            players.push({ id: 'host_player', name: 'Host', cardCount: 0 });
+            
+            // Add self
+            players.push({ id: playerId, name: playerName, cardCount: 0 });
+            
+            // Add 1-3 random players
+            const numPlayers = Math.floor(Math.random() * 3) + 1;
+            const names = ['Alice', 'Bob', 'Charlie', 'David', 'Emma', 'Frank'];
+            
+            for (let i = 0; i < numPlayers; i++) {
+                players.push({
+                    id: generatePlayerId(),
+                    name: names[i],
+                    cardCount: 0
+                });
+            }
+        }
+        
+        return players;
     }
 
     function getNextPlayer(currentPlayerId) {
@@ -562,6 +714,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             
             gameState.playerName = playerNameInput.value.trim();
+            showScreen('loading');
             gameState.socket.emit('create-game', { playerName: gameState.playerName });
         });
         
@@ -588,6 +741,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 return;
             }
             
+            showScreen('loading');
             gameState.socket.emit('join-game', { 
                 gameId: gameCode,
                 playerName: gameState.playerName
@@ -609,6 +763,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 return;
             }
             
+            showScreen('loading');
             gameState.socket.emit('start-game', { gameId: gameState.gameId });
         });
         
@@ -627,8 +782,7 @@ document.addEventListener('DOMContentLoaded', function() {
         // Play again button
         playAgainBtn.addEventListener('click', () => {
             gameOverModal.classList.add('hidden');
-            lobbyScreen.classList.remove('hidden');
-            gameScreen.classList.add('hidden');
+            showScreen('lobby');
             
             // Reset game state
             gameState.players = gameState.players.map(p => ({ ...p, cardCount: 0 }));
@@ -638,6 +792,12 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // Update player list
             renderPlayerList();
+            saveGameState();
+        });
+        
+        // Handle page refresh/close
+        window.addEventListener('beforeunload', () => {
+            saveGameState();
         });
         
         // Socket events
@@ -648,8 +808,7 @@ document.addEventListener('DOMContentLoaded', function() {
             gameState.players = [{ id: data.playerId, name: gameState.playerName, cardCount: 0 }];
             
             // Show lobby screen
-            welcomeScreen.classList.add('hidden');
-            lobbyScreen.classList.remove('hidden');
+            showScreen('lobby');
             
             // Display game code
             gameCodeDisplay.textContent = gameState.gameId;
@@ -660,6 +819,9 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // Show/hide start game button based on host status
             startGameBtn.style.display = gameState.isHost ? 'block' : 'none';
+            
+            // Save game state
+            saveGameState();
         });
         
         gameState.socket.on('game-joined', data => {
@@ -678,8 +840,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             
             // Show lobby screen
-            welcomeScreen.classList.add('hidden');
-            lobbyScreen.classList.remove('hidden');
+            showScreen('lobby');
             
             // Display game code
             gameCodeDisplay.textContent = gameState.gameId;
@@ -699,6 +860,43 @@ document.addEventListener('DOMContentLoaded', function() {
                     playerName: gameState.playerName
                 });
             }
+            
+            // Save game state
+            saveGameState();
+        });
+        
+        gameState.socket.on('lobby-reconnected', data => {
+            gameState.players = data.players;
+            
+            // Show lobby screen
+            showScreen('lobby');
+            
+            // Display game code
+            gameCodeDisplay.textContent = gameState.gameId;
+            gameCodeDisplayIngame.textContent = gameState.gameId;
+            
+            // Update player list
+            renderPlayerList();
+            
+            // Show/hide start game button based on host status
+            startGameBtn.style.display = gameState.isHost ? 'block' : 'none';
+        });
+        
+        gameState.socket.on('game-reconnected', data => {
+            gameState.players = data.players;
+            gameState.deck = data.deck;
+            gameState.currentPlayer = data.currentPlayer;
+            gameState.currentColor = data.currentColor;
+            gameState.currentValue = data.currentValue;
+            
+            // Deal cards
+            dealCards();
+            
+            // Show game screen
+            showScreen('game');
+            
+            // Render game state
+            renderGameState();
         });
         
         gameState.socket.on('player-joined', data => {
@@ -725,8 +923,7 @@ document.addEventListener('DOMContentLoaded', function() {
             dealCards();
             
             // Show game screen
-            lobbyScreen.classList.add('hidden');
-            gameScreen.classList.remove('hidden');
+            showScreen('game');
             
             // Render game state
             renderGameState();
@@ -781,6 +978,7 @@ document.addEventListener('DOMContentLoaded', function() {
         
         gameState.socket.on('error', data => {
             showToast(data.message);
+            showScreen('welcome');
         });
     }
 
@@ -810,8 +1008,23 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Initialize the game
     function init() {
+        // Show loading screen initially
+        showScreen('loading');
+        
+        // Initialize socket connection
         initializeSocket();
+        
+        // Set up event listeners
         setupEventListeners();
+        
+        // Check for saved game state
+        if (loadGameState()) {
+            // Try to reconnect to existing game
+            reconnectToGame();
+        } else {
+            // Show welcome screen if no saved game
+            showScreen('welcome');
+        }
     }
 
     // Start the game
