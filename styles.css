@@ -359,3 +359,9 @@ body {
 .flip-card.flipped {
     transform: rotateY(180deg);
 }
+
+/* Loading spinner */
+.spinner-border {
+    width: 3rem;
+    height: 3rem;
+}
